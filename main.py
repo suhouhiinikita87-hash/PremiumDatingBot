@@ -42,20 +42,6 @@ class MailingState(StatesGroup):
 class ChatState(StatesGroup):
     waiting_for_message = State()
 
-# --- Проверки (упрощённые, без PIL) ---
-async def check_face_has_face(image_path: str) -> bool:
-    """Упрощённая проверка — пропускаем все фото"""
-    return True
-
-async def check_photo_is_safe(image_path: str) -> tuple:
-    """Проверка фото на безопасность (упрощённая)"""
-    try:
-        if os.path.exists(image_path) and os.path.getsize(image_path) > 5000:
-            return True, "OK"
-        return False, "Фото слишком маленькое"
-    except Exception:
-        return True, "OK"
-
 # --- СТАРТ ---
 @dp.message(Command("start"))
 async def start(message: Message, state: FSMContext):
@@ -138,14 +124,6 @@ async def reg_photo(message: Message, state: FSMContext):
     file = await bot.get_file(file_id)
     photo_path = f"photos/{message.from_user.id}.jpg"
     await bot.download_file(file.file_path, photo_path)
-    
-    await message.answer("🔍 Проверяю фото...")
-    
-    is_safe, reason = await check_photo_is_safe(photo_path)
-    if not is_safe:
-        os.remove(photo_path)
-        await message.answer(f"❌ {reason}")
-        return
     
     user_data = {
         "name": data["name"],
@@ -357,13 +335,32 @@ async def get_referral_link(call: CallbackQuery):
     await call.message.edit_text(f"🔗 Ваша ссылка:\n{link}")
     await call.answer()
 
+@dp.callback_query(F.data == "buy_premium_bonus")
+async def buy_premium_bonus(call: CallbackQuery):
+    tg_id = call.from_user.id
+    balance = get_bonus_balance(tg_id)
+    if balance >= 200:
+        use_bonus(tg_id, 200)
+        update_premium(tg_id, 30)
+        await call.message.edit_text("✅ Premium активирован на 30 дней за бонусы!")
+    else:
+        await call.message.edit_text(f"❌ Недостаточно бонусов. Нужно 200, у вас {balance}")
+    await call.answer()
+
 # --- PREMIUM ---
 @dp.message(F.text == "⭐ Купить Premium")
 async def buy_premium(message: Message):
-    await message.answer("Premium возможности:\n• Видеть лайки\n• Расширенный поиск", reply_markup=premium_keyboard())
+    await message.answer(
+        "🌟 Premium возможности:\n"
+        "• Видеть, кто тебя лайкнул\n"
+        "• Расширенный поиск\n"
+        "• Приоритет в выдаче\n\n"
+        "Выбери способ оплаты:",
+        reply_markup=premium_keyboard()
+    )
 
 @dp.callback_query(F.data == "buy_with_bonus")
-async def buy_premium_bonus(call: CallbackQuery):
+async def buy_premium_with_bonus(call: CallbackQuery):
     tg_id = call.from_user.id
     balance = get_bonus_balance(tg_id)
     if balance >= 200:
@@ -378,7 +375,11 @@ async def buy_premium_bonus(call: CallbackQuery):
 @dp.message(F.text == "📊 Статистика")
 async def stats(message: Message):
     await message.answer(
-        f"📊 Статистика\n👥 Пользователей: {get_user_count()}\n❤️ Лайков: {get_likes_count()}"
+        f"📊 <b>Статистика бота</b>\n\n"
+        f"👥 Пользователей: {get_user_count()}\n"
+        f"❤️ Лайков всего: {get_likes_count()}\n\n"
+        f"💡 Совет: Купи Premium, чтобы выделяться!",
+        parse_mode="HTML"
     )
 
 # --- АДМИН ПАНЕЛЬ ---
@@ -394,19 +395,20 @@ async def admin_stats(call: CallbackQuery):
     if call.from_user.id != ADMIN_ID:
         await call.answer("⛔ Нет доступа")
         return
-    await call.message.edit_text(f"📊 Статистика\n👥 Пользователей: {get_user_count()}\n❤️ Лайков: {get_likes_count()}")
+    await call.message.edit_text(
+        f"📊 Полная статистика:\n"
+        f"👥 Пользователей: {get_user_count()}\n"
+        f"❤️ Лайков: {get_likes_count()}"
+    )
     await call.answer()
 
-@dp.callback_query(F.data == "admin_reports")
-async def admin_reports(call: CallbackQuery):
+@dp.callback_query(F.data == "admin_users")
+async def admin_users(call: CallbackQuery):
     if call.from_user.id != ADMIN_ID:
         await call.answer("⛔ Нет доступа")
         return
-    reports = get_pending_reports()
-    if not reports:
-        await call.message.edit_text("📭 Нет жалоб")
-        return
-    await call.message.edit_text(f"📋 Жалоб: {len(reports)}", reply_markup=admin_reports_keyboard(reports))
+    users = get_all_users()
+    await call.message.edit_text(f"👥 Всего пользователей: {len(users)}")
     await call.answer()
 
 @dp.callback_query(F.data == "admin_mailing")
@@ -422,29 +424,52 @@ async def admin_mailing(call: CallbackQuery, state: FSMContext):
 async def send_mailing(message: Message, state: FSMContext):
     if message.from_user.id != ADMIN_ID:
         return
+    text = message.text
     users = get_all_users()
     success = 0
     for user_id in users:
         try:
-            await bot.send_message(user_id, f"📢 {message.text}")
+            await bot.send_message(user_id, f"📢 <b>Рассылка</b>\n\n{text}", parse_mode="HTML")
             success += 1
             await asyncio.sleep(0.05)
         except:
             pass
-    save_mailing(message.text, success)
+    save_mailing(text, success)
     await message.answer(f"✅ Рассылка отправлена {success} пользователям")
     await state.clear()
 
-@dp.callback_query(F.data == "back_to_menu")
-async def back_to_menu(call: CallbackQuery, state: FSMContext):
-    await state.clear()
-    await call.message.edit_text("👋 Главное меню", reply_markup=main_menu())
+@dp.callback_query(F.data == "admin_reports")
+async def admin_reports(call: CallbackQuery):
+    if call.from_user.id != ADMIN_ID:
+        await call.answer("⛔ Нет доступа")
+        return
+    reports = get_pending_reports()
+    if not reports:
+        await call.message.edit_text("📭 Нет активных жалоб")
+        return
+    await call.message.edit_text(
+        f"📋 Активные жалобы: {len(reports)}",
+        reply_markup=admin_reports_keyboard(reports)
+    )
     await call.answer()
 
 @dp.callback_query(F.data.startswith("review_report_"))
 async def review_report(call: CallbackQuery):
     report_id = int(call.data.split("_")[2])
-    await call.message.edit_text(f"📋 Жалоба #{report_id}", reply_markup=review_report_keyboard(report_id))
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM reports WHERE id = ?', (report_id,))
+    report = cursor.fetchone()
+    conn.close()
+    if report:
+        await call.message.edit_text(
+            f"📋 Жалоба #{report_id}\n"
+            f"От: {report[1]}\n"
+            f"На: {report[2]}\n"
+            f"Причина: {report[4]}\n"
+            f"Дата: {report[5]}",
+            reply_markup=review_report_keyboard(report_id)
+        )
     await call.answer()
 
 @dp.callback_query(F.data.startswith("approve_report_"))
@@ -458,7 +483,7 @@ async def approve_report(call: CallbackQuery):
     if result:
         block_user(ADMIN_ID, result[0])
         resolve_report(report_id, "approved")
-        await call.message.edit_text("✅ Пользователь заблокирован")
+        await call.message.edit_text(f"✅ Пользователь {result[0]} заблокирован")
     await call.answer()
 
 @dp.callback_query(F.data.startswith("reject_report_"))
@@ -471,6 +496,20 @@ async def reject_report(call: CallbackQuery):
 @dp.callback_query(F.data == "admin_back")
 async def admin_back(call: CallbackQuery):
     await call.message.edit_text("🔧 Админ панель:", reply_markup=admin_keyboard())
+    await call.answer()
+
+@dp.callback_query(F.data == "back_to_menu")
+async def back_to_menu(call: CallbackQuery, state: FSMContext):
+    await state.clear()
+    tg_id = call.from_user.id
+    user = get_user(tg_id)
+    if user:
+        await call.message.edit_text(
+            "👋 Главное меню",
+            reply_markup=main_menu(is_premium(tg_id))
+        )
+    else:
+        await call.message.edit_text("👋 Главное меню")
     await call.answer()
 
 # --- ЗАПУСК ---
