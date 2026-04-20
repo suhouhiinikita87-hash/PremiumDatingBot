@@ -3,8 +3,8 @@ import os
 import sqlite3
 from datetime import datetime
 from aiogram import Bot, Dispatcher, F
-from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery, FSInputFile
+from aiogram.filters import Command, StateFilter
+from aiogram.types import Message, CallbackQuery, InputFile
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -33,7 +33,7 @@ class EditProfileState(StatesGroup):
 
 # --- ГЛАВНОЕ МЕНЮ ---
 @dp.message(Command("start"))
-async def start(message: Message):
+async def start(message: Message, state: FSMContext):
     tg_id = message.from_user.id
     user = get_user(tg_id)
     
@@ -50,15 +50,14 @@ async def start(message: Message):
             "🌟 Добро пожаловать в Premium Dating Bot!\n\n"
             "Давай создадим твою анкету. Как тебя зовут?"
         )
-        await message.answer("✏️ Напиши своё имя:")
-        await RegisterState.name.set()
+        await state.set_state(RegisterState.name)
 
 # --- РЕГИСТРАЦИЯ ---
 @dp.message(RegisterState.name)
 async def reg_name(message: Message, state: FSMContext):
     await state.update_data(name=message.text)
     await message.answer("🎂 Сколько тебе лет? (только число)")
-    await RegisterState.age.set()
+    await state.set_state(RegisterState.age)
 
 @dp.message(RegisterState.age)
 async def reg_age(message: Message, state: FSMContext):
@@ -67,20 +66,20 @@ async def reg_age(message: Message, state: FSMContext):
         return
     await state.update_data(age=int(message.text))
     await message.answer("🏙️ Из какого ты города?")
-    await RegisterState.city.set()
+    await state.set_state(RegisterState.city)
 
 @dp.message(RegisterState.city)
 async def reg_city(message: Message, state: FSMContext):
     await state.update_data(city=message.text)
     await message.answer("👤 Твой пол:", reply_markup=gender_keyboard())
-    await RegisterState.gender.set()
+    await state.set_state(RegisterState.gender)
 
 @dp.callback_query(RegisterState.gender, F.data.startswith("gender_"))
 async def reg_gender(call: CallbackQuery, state: FSMContext):
     gender_map = {"gender_male": "Мужской", "gender_female": "Женский", "gender_other": "Другой"}
     await state.update_data(gender=gender_map[call.data])
     await call.message.edit_text("👥 Кого ты ищешь?", reply_markup=looking_for_keyboard())
-    await RegisterState.looking_for.set()
+    await state.set_state(RegisterState.looking_for)
     await call.answer()
 
 @dp.callback_query(RegisterState.looking_for, F.data.startswith("looking_"))
@@ -88,14 +87,14 @@ async def reg_looking_for(call: CallbackQuery, state: FSMContext):
     looking_map = {"looking_female": "Девушку", "looking_male": "Парня", "looking_friends": "Друзей", "looking_any": "Не важно"}
     await state.update_data(looking_for=looking_map[call.data])
     await call.message.edit_text("📝 Напиши немного о себе (увлечения, цели, интересы):")
-    await RegisterState.bio.set()
+    await state.set_state(RegisterState.bio)
     await call.answer()
 
 @dp.message(RegisterState.bio)
 async def reg_bio(message: Message, state: FSMContext):
     await state.update_data(bio=message.text)
     await message.answer("📷 Отправь своё фото:")
-    await RegisterState.photo.set()
+    await state.set_state(RegisterState.photo)
 
 @dp.message(RegisterState.photo, F.photo)
 async def reg_photo(message: Message, state: FSMContext):
@@ -166,7 +165,7 @@ async def search_profiles(message: Message):
         )
         
         if photo_path and os.path.exists(photo_path):
-            photo = FSInputFile(photo_path)
+            photo = InputFile(photo_path)
             await message.answer_photo(photo, caption=caption, reply_markup=profile_actions(cand_tg_id, already_liked))
         else:
             await message.answer(caption, reply_markup=profile_actions(cand_tg_id, already_liked))
@@ -217,7 +216,7 @@ async def my_profile(message: Message):
     )
     
     if user['photo'] and os.path.exists(user['photo']):
-        photo = FSInputFile(user['photo'])
+        photo = InputFile(user['photo'])
         await message.answer_photo(photo, caption=caption, parse_mode="HTML", reply_markup=edit_profile_buttons())
     else:
         await message.answer(caption, parse_mode="HTML", reply_markup=edit_profile_buttons())
@@ -245,7 +244,7 @@ async def who_liked_me(message: Message):
         tg_id_like, name, age, city, photo_path = like
         text = f"👤 {name}, {age} лет, {city}"
         if photo_path and os.path.exists(photo_path):
-            photo = FSInputFile(photo_path)
+            photo = InputFile(photo_path)
             await message.answer_photo(photo, caption=text)
         else:
             await message.answer(text)
