@@ -15,8 +15,8 @@ from database import *
 from keyboards import *
 
 # Face++ API ключи (зарегистрируйтесь бесплатно на https://console.faceplusplus.com)
-FACE_API_KEY = "ВАШ_API_KEY"  # Замените на свой
-FACE_API_SECRET = "ВАШ_API_SECRET"  # Замените на свой
+FACE_API_KEY = "G2lz20dJut7_gei_bP1e2PpVX7erix0h"
+FACE_API_SECRET = "sPPMOI90KnAXgmyc0NSck3GFmGp2mlu9"
 
 # Инициализация
 bot = Bot(token=TOKEN)
