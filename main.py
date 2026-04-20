@@ -68,7 +68,6 @@ async def check_face_has_face(image_path: str) -> bool:
 async def check_face_has_face(image_path: str) -> bool:
     """Упрощённая проверка — пропускаем все фото"""
     return True
-        from PIL import Image
         with Image.open(image_path) as img:
             width, height = img.size
             if width < 100 or height < 100:
