@@ -1,0 +1,7 @@
+[build]
+# ЭТО ГЛАВНОЕ: указываем, какие переменные нужны на этапе сборки
+[build.args]
+TOKEN = "{{ .TOKEN }}"
+
+[deploy]
+startCommand = "python main.py"
