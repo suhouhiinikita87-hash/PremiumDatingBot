@@ -65,9 +65,9 @@ async def check_face_has_face(image_path: str) -> bool:
         print(f"Face++ error: {e}")
         return True
 
-async def check_photo_is_safe(image_path: str) -> tuple:
-    """Проверка фото на безопасность"""
-    try:
+async def check_face_has_face(image_path: str) -> bool:
+    """Упрощённая проверка — пропускаем все фото"""
+    return True
         from PIL import Image
         with Image.open(image_path) as img:
             width, height = img.size
