@@ -19,11 +19,20 @@ def init_db():
             bio TEXT,
             photo TEXT,
             premium_until TEXT,
-            created_at TEXT,
-            referrer_id INTEGER,
-            bonus_balance INTEGER DEFAULT 0
+            created_at TEXT
         )
     ''')
+    
+    # Добавляем недостающие колонки (миграция для старых баз)
+    try:
+        cursor.execute('ALTER TABLE users ADD COLUMN referrer_id INTEGER')
+    except sqlite3.OperationalError:
+        pass
+    
+    try:
+        cursor.execute('ALTER TABLE users ADD COLUMN bonus_balance INTEGER DEFAULT 0')
+    except sqlite3.OperationalError:
+        pass
     
     # Таблица лайков
     cursor.execute('''
@@ -105,6 +114,9 @@ def init_db():
     conn.commit()
     conn.close()
 
+# --- ОСТАЛЬНЫЕ ФУНКЦИИ ОСТАЮТСЯ БЕЗ ИЗМЕНЕНИЙ ---
+# (все функции get_user, save_user, add_like и т.д. остаются как были)
+
 def get_user(tg_id):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -112,20 +124,37 @@ def get_user(tg_id):
     user = cursor.fetchone()
     conn.close()
     if user:
-        return {
-            "tg_id": user[0],
-            "name": user[1],
-            "age": user[2],
-            "city": user[3],
-            "gender": user[4],
-            "looking_for": user[5],
-            "bio": user[6],
-            "photo": user[7],
-            "premium_until": user[8],
-            "created_at": user[9],
-            "referrer_id": user[10],
-            "bonus_balance": user[11] if user[11] else 0
-        }
+        # Определяем количество колонок в таблице
+        if len(user) == 11:
+            return {
+                "tg_id": user[0],
+                "name": user[1],
+                "age": user[2],
+                "city": user[3],
+                "gender": user[4],
+                "looking_for": user[5],
+                "bio": user[6],
+                "photo": user[7],
+                "premium_until": user[8],
+                "created_at": user[9],
+                "referrer_id": user[10] if len(user) > 10 else None,
+                "bonus_balance": user[11] if len(user) > 11 else 0
+            }
+        else:
+            return {
+                "tg_id": user[0],
+                "name": user[1],
+                "age": user[2],
+                "city": user[3],
+                "gender": user[4],
+                "looking_for": user[5],
+                "bio": user[6],
+                "photo": user[7],
+                "premium_until": user[8],
+                "created_at": user[9],
+                "referrer_id": None,
+                "bonus_balance": 0
+            }
     return None
 
 def save_user(tg_id, data):
@@ -206,7 +235,6 @@ def get_search_candidates(tg_id, filters=None):
     query = "SELECT tg_id, name, age, city, photo, bio FROM users WHERE tg_id != ?"
     params = [tg_id]
     
-    # Добавляем проверку на блокировки
     query += " AND tg_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id = ?)"
     params.append(tg_id)
     
@@ -248,7 +276,6 @@ def get_likes_count():
     conn.close()
     return count
 
-# --- ЧАТЫ ---
 def get_or_create_chat(user1_id, user2_id):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -311,7 +338,6 @@ def get_user_chats(tg_id):
     conn.close()
     return chats
 
-# --- РЕФЕРАЛЫ ---
 def add_referral(referrer_id, referred_id):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -351,7 +377,6 @@ def use_bonus(tg_id, amount):
         return True
     return False
 
-# --- РАССЫЛКИ ---
 def get_all_users():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -370,7 +395,6 @@ def save_mailing(message, recipients_count):
     conn.commit()
     conn.close()
 
-# --- ЖАЛОБЫ И БЛОКИРОВКИ ---
 def add_report(from_tg, to_tg, photo_path, reason="интимное фото"):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
