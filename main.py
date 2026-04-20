@@ -1,10 +1,11 @@
 import asyncio
 import os
 import sqlite3
+import httpx
 from datetime import datetime
 from aiogram import Bot, Dispatcher, F
-from aiogram.filters import Command, StateFilter
-from aiogram.types import Message, CallbackQuery, InputFile
+from aiogram.filters import Command
+from aiogram.types import Message, CallbackQuery, FSInputFile
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -12,6 +13,10 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from config import TOKEN, ADMIN_ID
 from database import *
 from keyboards import *
+
+# Face++ API ключи (зарегистрируйтесь бесплатно на https://console.faceplusplus.com)
+FACE_API_KEY = "ВАШ_API_KEY"  # Замените на свой
+FACE_API_SECRET = "ВАШ_API_SECRET"  # Замените на свой
 
 # Инициализация
 bot = Bot(token=TOKEN)
@@ -30,6 +35,34 @@ class RegisterState(StatesGroup):
 
 class EditProfileState(StatesGroup):
     waiting_for = State()
+
+# --- Функция проверки фото на наличие лица ---
+async def check_face_has_face(image_path: str) -> bool:
+    """Проверяет, есть ли на фото лицо через Face++ API"""
+    try:
+        with open(image_path, "rb") as f:
+            files = {"image_file": f}
+            data = {
+                "api_key": FACE_API_KEY,
+                "api_secret": FACE_API_SECRET,
+                "return_attributes": "none"
+            }
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    "https://api-us.faceplusplus.com/facepp/v3/detect",
+                    data=data,
+                    files=files
+                )
+                result = response.json()
+                
+                # Если есть хотя бы одно лицо — возвращаем True
+                if "faces" in result and len(result["faces"]) > 0:
+                    return True
+                return False
+    except Exception as e:
+        print(f"Face++ API error: {e}")
+        # Если API не работает, пропускаем проверку
+        return True
 
 # --- ГЛАВНОЕ МЕНЮ ---
 @dp.message(Command("start"))
@@ -93,19 +126,38 @@ async def reg_looking_for(call: CallbackQuery, state: FSMContext):
 @dp.message(RegisterState.bio)
 async def reg_bio(message: Message, state: FSMContext):
     await state.update_data(bio=message.text)
-    await message.answer("📷 Отправь своё фото:")
+    await message.answer("📷 Отправь своё фото. Оно должно содержать твоё лицо!")
     await state.set_state(RegisterState.photo)
 
 @dp.message(RegisterState.photo, F.photo)
 async def reg_photo(message: Message, state: FSMContext):
     data = await state.get_data()
     
-    # Сохраняем фото
-    os.makedirs("photos", exist_ok=True)
+    # Сохраняем временное фото
+    os.makedirs("temp_photos", exist_ok=True)
     file_id = message.photo[-1].file_id
     file = await bot.get_file(file_id)
+    temp_photo_path = f"temp_photos/{message.from_user.id}_temp.jpg"
+    await bot.download_file(file.file_path, temp_photo_path)
+    
+    # Проверяем, есть ли лицо на фото
+    await message.answer("🔍 Проверяю фото...")
+    
+    has_face = await check_face_has_face(temp_photo_path)
+    
+    if not has_face:
+        os.remove(temp_photo_path)
+        await message.answer(
+            "❌ На фото не обнаружено лицо или фото не прошло проверку.\n\n"
+            "Пожалуйста, отправь чёткое фото с твоим лицом.\n"
+            "Фото с животными, пейзажами или не вашим лицом не подойдут."
+        )
+        return
+    
+    # Фото прошло проверку — сохраняем
+    os.makedirs("photos", exist_ok=True)
     photo_path = f"photos/{message.from_user.id}.jpg"
-    await bot.download_file(file.file_path, photo_path)
+    os.rename(temp_photo_path, photo_path)
     
     # Сохраняем пользователя
     user_data = {
@@ -127,7 +179,8 @@ async def reg_photo(message: Message, state: FSMContext):
         f"🎂 Возраст: {data['age']}\n"
         f"🏙️ Город: {data['city']}\n"
         f"👥 Ищу: {data['looking_for']}\n\n"
-        "🔍 Используй кнопку 'Искать анкеты' для поиска!",
+        "🔍 Используй кнопку 'Искать анкеты' для поиска!\n\n"
+        "📸 Все фото проверяются на наличие лица, чтобы бот был безопасным.",
         reply_markup=main_menu()
     )
     await state.clear()
@@ -165,7 +218,7 @@ async def search_profiles(message: Message):
         )
         
         if photo_path and os.path.exists(photo_path):
-            photo = InputFile(photo_path)
+            photo = FSInputFile(photo_path)
             await message.answer_photo(photo, caption=caption, reply_markup=profile_actions(cand_tg_id, already_liked))
         else:
             await message.answer(caption, reply_markup=profile_actions(cand_tg_id, already_liked))
@@ -196,14 +249,14 @@ async def like_profile(call: CallbackQuery):
     else:
         await call.answer("❌ Вы уже лайкали этого пользователя")
 
-# --- МОЯ АНКЕТА ---
+# --- МОЯ АНКЕТА (ИСПРАВЛЕНО) ---
 @dp.message(F.text == "👤 Моя анкета")
 async def my_profile(message: Message):
     tg_id = message.from_user.id
     user = get_user(tg_id)
     
     if not user:
-        await message.answer("❌ Вы не зарегистрированы. /start")
+        await message.answer("❌ Вы не зарегистрированы. Напишите /start")
         return
     
     caption = (
@@ -216,8 +269,12 @@ async def my_profile(message: Message):
     )
     
     if user['photo'] and os.path.exists(user['photo']):
-        photo = InputFile(user['photo'])
-        await message.answer_photo(photo, caption=caption, parse_mode="HTML", reply_markup=edit_profile_buttons())
+        try:
+            photo = FSInputFile(user['photo'])
+            await message.answer_photo(photo, caption=caption, parse_mode="HTML", reply_markup=edit_profile_buttons())
+        except Exception as e:
+            print(f"Photo error: {e}")
+            await message.answer(caption, parse_mode="HTML", reply_markup=edit_profile_buttons())
     else:
         await message.answer(caption, parse_mode="HTML", reply_markup=edit_profile_buttons())
 
@@ -244,8 +301,11 @@ async def who_liked_me(message: Message):
         tg_id_like, name, age, city, photo_path = like
         text = f"👤 {name}, {age} лет, {city}"
         if photo_path and os.path.exists(photo_path):
-            photo = InputFile(photo_path)
-            await message.answer_photo(photo, caption=text)
+            try:
+                photo = FSInputFile(photo_path)
+                await message.answer_photo(photo, caption=text)
+            except Exception:
+                await message.answer(text)
         else:
             await message.answer(text)
 
