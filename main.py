@@ -182,7 +182,7 @@ async def search_profiles(message: Message):
         caption = f"👤 {name}, {age} лет\n🏙️ {city}\n\n📝 {bio[:200] if bio else 'Не указано'}"
         
         if photo_path and os.path.exists(photo_path):
-            photo = InputFile(photo_path)
+            photo = FSInputFile(photo_path)
             await message.answer_photo(photo, caption=caption, reply_markup=profile_actions(cand_tg_id, already_liked))
         else:
             await message.answer(caption, reply_markup=profile_actions(cand_tg_id, already_liked))
@@ -229,6 +229,7 @@ async def report_profile(call: CallbackQuery):
 async def my_profile(message: Message):
     tg_id = message.from_user.id
     user = get_user(tg_id)
+    
     if not user:
         await message.answer("❌ Вы не зарегистрированы. Напишите /start")
         return
@@ -243,11 +244,14 @@ async def my_profile(message: Message):
         f"🎁 Бонусов: {get_bonus_balance(tg_id)}"
     )
     
-    if user['photo'] and os.path.exists(user['photo']):
-        photo = InputFile(user['photo'])
-        await message.answer_photo(photo, caption=caption, parse_mode="HTML", reply_markup=edit_profile_buttons())
-    else:
-        await message.answer(caption, parse_mode="HTML", reply_markup=edit_profile_buttons())
+    try:
+        if user['photo'] and os.path.exists(user['photo']):
+            photo = FSInputFile(user['photo'])
+            await message.answer_photo(photo, caption=caption, parse_mode="HTML", reply_markup=edit_profile_buttons())
+        else:
+            await message.answer(caption, parse_mode="HTML", reply_markup=edit_profile_buttons())
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {str(e)}")
 
 # --- ЛАЙКНУЛИ МЕНЯ ---
 @dp.message(F.text == "❤️ Лайкнули меня")
@@ -267,7 +271,7 @@ async def who_liked_me(message: Message):
         tg_id_like, name, age, city, photo_path = like
         text = f"👤 {name}, {age} лет, {city}"
         if photo_path and os.path.exists(photo_path):
-            photo = InputFile(photo_path)
+            photo = FSInputFile(photo_path)
             await message.answer_photo(photo, caption=text)
         else:
             await message.answer(text)
